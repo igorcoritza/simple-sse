@@ -1,0 +1,5 @@
+{
+  "appHost": {
+    "path": "OutboxDemo.AppHost.csproj"
+  }
+}

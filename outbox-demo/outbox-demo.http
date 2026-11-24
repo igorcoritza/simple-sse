@@ -1,0 +1,65 @@
+# Requests to drive the demo from VS Code (REST Client) or Rider/Visual Studio.
+# Start the AppHost first: `dotnet run --project apphost`.
+@orders = http://localhost:5300
+@shipping = http://localhost:5310
+@dispatcher = http://localhost:5320
+
+### 1. Place an order the outbox way: order + outbox row in one transaction (202 Accepted)
+POST {{orders}}/api/orders
+Content-Type: application/json
+
+{ "customer": "Ada", "product": "Keyboard", "quantity": 1 }
+
+### 2. Look at the outbox: the relay moves the row from pending to sent within ~1 second
+GET {{orders}}/api/outbox
+
+### 3. The dispatcher called Shipping, which created the shipment and stored the idempotency key
+GET {{shipping}}/api/shipments
+
+###
+GET {{shipping}}/api/inbox
+
+### 4. Replay a message (paste an outbox id): it's sent again and Shipping ignores the duplicate
+POST {{orders}}/api/outbox/00000000-0000-0000-0000-000000000000/replay
+
+### 4b. Dispatcher crash: Shipping does the work, then the dispatcher "dies" before completing the
+###     message. Turn it on, place an order (request 1) and check the deliveries: delivery 1 is
+###     "simulated-crash", delivery 2 is "already-processed", and there is still ONE shipment.
+PUT {{dispatcher}}/api/chaos
+Content-Type: application/json
+
+{ "crashAfterDelivery": true }
+
+###
+GET {{dispatcher}}/api/deliveries
+
+###
+PUT {{dispatcher}}/api/chaos
+Content-Type: application/json
+
+{ "crashAfterDelivery": false }
+
+### 5. The naive way: commit, then call Shipping over HTTP. Stop "shipping" in the Aspire
+###    dashboard first, and the order is saved but no shipment will ever exist.
+POST {{orders}}/api/orders/naive
+Content-Type: application/json
+
+{ "customer": "Grace", "product": "Mouse", "quantity": 2 }
+
+### 6. Chaos on: Shipping answers 503, the dispatcher abandons, Service Bus retries 5 times, then dead-letters
+PUT {{shipping}}/api/chaos
+Content-Type: application/json
+
+{ "failProcessing": true }
+
+### 7. Dead-letter queue (peek)
+GET {{dispatcher}}/api/dead-letters
+
+### 8. Chaos off, then resubmit the dead letters
+PUT {{shipping}}/api/chaos
+Content-Type: application/json
+
+{ "failProcessing": false }
+
+###
+POST {{dispatcher}}/api/dead-letters/resubmit

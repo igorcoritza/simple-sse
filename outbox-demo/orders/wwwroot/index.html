@@ -1,0 +1,245 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Outbox demo</title>
+  <style>
+    :root {
+      --bg: #f6f7f9; --panel: #fff; --text: #1d2330; --muted: #6b7385; --border: #e2e5ea;
+      --accent: #2f6fdf; --ok: #1f8a4c; --warn: #b7791f; --bad: #c53030;
+      font-family: system-ui, -apple-system, "Segoe UI", sans-serif; font-size: 14px;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root { --bg: #14171c; --panel: #1c2028; --text: #e6e9ef; --muted: #959cab; --border: #2c323d;
+              --accent: #6b9cf0; --ok: #4cc283; --warn: #e0a84a; --bad: #f06b6b; }
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--text); }
+    header { padding: 20px 24px 8px; }
+    h1 { margin: 0 0 4px; font-size: 20px; }
+    header p { margin: 0; color: var(--muted); max-width: 900px; line-height: 1.5; }
+    main { display: grid; grid-template-columns: repeat(auto-fit, minmax(440px, 1fr)); gap: 16px; padding: 16px 24px 32px; }
+    section { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; min-width: 0; }
+    section.wide { grid-column: 1 / -1; }
+    h2 { margin: 0 0 4px; font-size: 15px; }
+    h2 small { color: var(--muted); font-weight: normal; }
+    .hint { color: var(--muted); margin: 0 0 10px; font-size: 13px; }
+    .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 8px; }
+    input { background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px; font: inherit; }
+    input[type=number] { width: 64px; }
+    button { font: inherit; border: 1px solid var(--border); background: var(--bg); color: var(--text); border-radius: 6px; padding: 6px 12px; cursor: pointer; }
+    button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+    button.danger { border-color: var(--bad); color: var(--bad); }
+    button.small { padding: 2px 8px; font-size: 12px; }
+    .table-wrap { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th, td { text-align: left; padding: 5px 6px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+    th { color: var(--muted); font-weight: 500; }
+    td.err { white-space: normal; color: var(--bad); min-width: 180px; max-width: 280px; font-size: 12px; }
+    code { font-size: 12px; color: var(--muted); }
+    .tag { display: inline-block; padding: 1px 7px; border-radius: 10px; font-size: 12px; border: 1px solid currentColor; }
+    .ok { color: var(--ok); } .warn { color: var(--warn); } .bad { color: var(--bad); } .muted { color: var(--muted); }
+    #log { font-size: 13px; min-height: 18px; }
+    .empty { color: var(--muted); font-style: italic; padding: 6px 0; }
+    @media (max-width: 520px) { main { grid-template-columns: 1fr; padding: 12px 16px; } header { padding: 16px 16px 0; } }
+  </style>
+</head>
+<body>
+<header>
+  <h1>Outbox pattern demo</h1>
+  <p>Orders API (service A) doesn't call Shipping: it saves the order and an <b>OrderPlaced</b> event row
+    in one database transaction. The <b>outbox relay</b> worker reads that table and publishes to Azure Service Bus,
+    and the <b>dispatcher</b> takes each message from the queue and calls the Shipping API (service B), which
+    deduplicates by message id. Compare it with the naive endpoint, which commits and then calls Shipping directly.</p>
+</header>
+<main>
+  <section class="wide">
+    <h2>Try it</h2>
+    <div class="row">
+      <input id="customer" value="Ada" placeholder="Customer" aria-label="Customer">
+      <input id="product" value="Keyboard" placeholder="Product" aria-label="Product">
+      <input id="quantity" type="number" value="1" min="1" aria-label="Quantity">
+      <button class="primary" onclick="placeOrder('/api/orders')">Place order (outbox)</button>
+      <button onclick="placeOrder('/api/orders/naive')">Place order (naive HTTP)</button>
+    </div>
+    <div class="row">
+      <button id="chaosBtn" class="danger" onclick="toggleChaos()">Chaos: off</button>
+      <span class="hint" style="margin:0">Makes the Shipping API answer 503: watch the dispatcher retry until Service Bus dead-letters the message.
+        Stop the <b>shipping</b>, <b>dispatcher</b> or <b>servicebus</b> resources in the Aspire dashboard to simulate outages.</span>
+    </div>
+    <div class="row">
+      <button id="crashBtn" class="danger" onclick="toggleCrash()">Dispatcher crash: off</button>
+      <span class="hint" style="margin:0">The dispatcher "crashes" after Shipping did the work but before completing the message.
+        Service Bus redelivers it, and the second delivery must not create a second shipment.</span>
+    </div>
+    <div id="log" class="muted"></div>
+  </section>
+
+  <section>
+    <h2>Orders <small>· Orders DB</small></h2>
+    <p class="hint">The last column joins with Shipping's data: an order without a shipment is the inconsistency the outbox avoids.</p>
+    <div class="table-wrap"><table id="orders"></table></div>
+  </section>
+
+  <section>
+    <h2>Outbox <small>· Orders DB</small></h2>
+    <p class="hint">Pending rows are picked up by the relay every second. Failed sends back off and retry.</p>
+    <div class="table-wrap"><table id="outbox"></table></div>
+  </section>
+
+  <section>
+    <h2>Shipments <small>· Shipping DB</small></h2>
+    <div class="table-wrap"><table id="shipments"></table></div>
+  </section>
+
+  <section>
+    <h2>Inbox <small>· Shipping DB</small></h2>
+    <p class="hint">Idempotency keys (Service Bus message ids) already handled. A replayed message finds its key here and gets the original shipment back.</p>
+    <div class="table-wrap"><table id="inbox"></table></div>
+  </section>
+
+  <section class="wide">
+    <h2>Dispatcher deliveries <small>· what the dispatcher did with each delivery</small></h2>
+    <p class="hint">The same message id can appear several times (at-least-once). Only one of them may say <b>created</b>.</p>
+    <div class="table-wrap"><table id="deliveries"></table></div>
+  </section>
+
+  <section class="wide">
+    <h2>Dead-letter queue <small>· Service Bus, via the dispatcher</small></h2>
+    <div class="row"><button onclick="resubmit()">Resubmit all to the queue</button></div>
+    <div class="table-wrap"><table id="dlq"></table></div>
+  </section>
+</main>
+
+<script>
+  let shippingUrl = '', dispatcherUrl = '';
+  let chaos = false, crash = false;
+
+  const $ = id => document.getElementById(id);
+  const esc = v => String(v ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  const short = id => `<code title="${esc(id)}">${esc(String(id).slice(-8))}</code>`;
+  const time = t => t ? new Date(t).toLocaleTimeString() : '';
+  const log = (text, cls = 'muted') => { $('log').className = cls; $('log').textContent = text; };
+
+  function table(el, headers, rows) {
+    $(el).innerHTML = rows.length
+      ? `<tr>${headers.map(h => `<th>${h}</th>`).join('')}</tr>` + rows.map(r => `<tr>${r.join('')}</tr>`).join('')
+      : `<tr><td class="empty">Nothing yet</td></tr>`;
+  }
+  const td = (html, cls = '') => `<td class="${cls}">${html}</td>`;
+
+  async function getJson(url) {
+    const r = await fetch(url);
+    if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
+    return r.json();
+  }
+
+  async function placeOrder(path) {
+    const body = { customer: $('customer').value, product: $('product').value, quantity: Number($('quantity').value) };
+    const r = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    if (r.ok) log(`${r.status}: order saved via ${path}`, 'ok');
+    else { const p = await r.json().catch(() => ({})); log(`${r.status}: ${p.title ?? ''} ${p.detail ?? ''}`, 'bad'); }
+    refresh();
+  }
+
+  async function replay(id) {
+    await fetch(`/api/outbox/${id}/replay`, { method: 'POST' });
+    log(`Outbox message …${id.slice(-8)} marked pending again: the relay re-sends it and Shipping should ignore the duplicate.`);
+    refresh();
+  }
+
+  async function toggleChaos() {
+    try {
+      const r = await fetch(`${shippingUrl}/api/chaos`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ failProcessing: !chaos }) });
+      chaos = (await r.json()).failProcessing;
+      renderChaos();
+    } catch { log('Shipping is not reachable', 'bad'); }
+  }
+  function renderChaos() {
+    $('chaosBtn').textContent = `Chaos: ${chaos ? 'ON, Shipping fails every message' : 'off'}`;
+    $('chaosBtn').className = chaos ? 'primary' : 'danger';
+    if (chaos) $('chaosBtn').style.background = 'var(--bad)'; else $('chaosBtn').style.background = '';
+  }
+
+  async function toggleCrash() {
+    try {
+      const r = await fetch(`${dispatcherUrl}/api/chaos`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ crashAfterDelivery: !crash }) });
+      crash = (await r.json()).crashAfterDelivery;
+      renderCrash();
+    } catch { log('Dispatcher is not reachable', 'bad'); }
+  }
+  function renderCrash() {
+    $('crashBtn').textContent = `Dispatcher crash: ${crash ? 'ON, first delivery of each message is not completed' : 'off'}`;
+    $('crashBtn').className = crash ? 'primary' : 'danger';
+    $('crashBtn').style.background = crash ? 'var(--bad)' : '';
+  }
+
+  async function resubmit() {
+    try {
+      const r = await (await fetch(`${dispatcherUrl}/api/dead-letters/resubmit`, { method: 'POST' })).json();
+      log(`${r.resubmitted} message(s) moved back to the queue`, 'ok');
+    } catch { log('Shipping is not reachable', 'bad'); }
+    refresh();
+  }
+
+  async function refresh() {
+    const [orders, outbox] = await Promise.all([getJson('/api/orders').catch(() => []), getJson('/api/outbox').catch(() => [])]);
+    let shipments = null, inbox = [], shippingUp = true;
+    const [dlq, deliveries] = await Promise.all([
+      getJson(`${dispatcherUrl}/api/dead-letters`).catch(() => []),
+      getJson(`${dispatcherUrl}/api/deliveries`).catch(() => [])]);
+    getJson(`${dispatcherUrl}/api/chaos`).then(c => { crash = c.crashAfterDelivery; renderCrash(); }).catch(() => {});
+    try {
+      [shipments, inbox] = await Promise.all([
+        getJson(`${shippingUrl}/api/shipments`), getJson(`${shippingUrl}/api/inbox`)]);
+      const c = await getJson(`${shippingUrl}/api/chaos`); chaos = c.failProcessing; renderChaos();
+    } catch { shippingUp = false; }
+
+    const deadOrders = new Set(dlq.map(m => { try { return JSON.parse(m.body).OrderId; } catch { return null; } }));
+    const shipCount = {};
+    (shipments ?? []).forEach(s => shipCount[s.orderId] = (shipCount[s.orderId] ?? 0) + 1);
+
+    table('orders', ['Order', 'Customer', 'Product', 'Qty', 'Via', 'Placed', 'Shipment'], orders.map(o => {
+      const n = shipCount[o.id] ?? 0;
+      const status = !shippingUp ? '<span class="tag muted">Shipping down</span>'
+        : n === 1 ? '<span class="tag ok">created</span>'
+        : n > 1 ? `<span class="tag bad">${n} shipments!</span>`
+        : o.createdVia === 'naive' ? '<span class="tag bad">missing</span>'
+        : deadOrders.has(o.id) ? '<span class="tag bad">dead-lettered</span>'
+        : '<span class="tag warn">pending</span>';
+      return [td(short(o.id)), td(esc(o.customer)), td(esc(o.product)), td(o.quantity), td(esc(o.createdVia)), td(time(o.placedOnUtc)), td(status)];
+    }));
+
+    table('outbox', ['Message', 'Type', 'Status', 'Attempts', 'Last error', ''], outbox.map(m => [
+      td(short(m.id)), td(esc(m.type)),
+      td(m.processedOnUtc ? `<span class="tag ok">sent ${time(m.processedOnUtc)}</span>`
+        : m.attempts ? '<span class="tag bad">retrying</span>' : '<span class="tag warn">pending</span>'),
+      td(m.attempts), td(esc(m.lastError), 'err'),
+      td(m.processedOnUtc ? `<button class="small" onclick="replay('${m.id}')" title="Mark as pending so it is sent again">Replay</button>` : ''),
+    ]));
+
+    table('shipments', ['Shipment', 'Order', 'Product', 'Qty', 'Via', 'Created'], (shipments ?? []).map(s => [
+      td(short(s.id)), td(short(s.orderId)), td(esc(s.product)), td(s.quantity), td(esc(s.createdVia)), td(time(s.createdOnUtc))]));
+
+    table('inbox', ['Idempotency key', 'Shipment', 'Processed'], inbox.map(m => [td(short(m.messageId)), td(short(m.shipmentId)), td(time(m.processedOnUtc))]));
+
+    const outcomeClass = { 'created': 'ok', 'already-processed': 'ok', 'simulated-crash': 'warn', 'retry': 'warn', 'dead-lettered': 'bad' };
+    table('deliveries', ['Time', 'Message id', 'Delivery #', 'Outcome', 'Detail'], deliveries.map(d => [
+      td(time(d.atUtc)), td(short(d.messageId)), td(d.deliveryCount),
+      td(`<span class="tag ${outcomeClass[d.outcome] ?? 'muted'}">${esc(d.outcome)}</span>`), td(esc(d.detail), 'muted')]));
+
+    table('dlq', ['Message id', 'Reason', 'Description', 'Deliveries', 'Body'], dlq.map(m => [
+      td(short(m.messageId)), td(esc(m.deadLetterReason)), td(esc(m.deadLetterErrorDescription), 'err'), td(m.deliveryCount), td(`<code>${esc(m.body)}</code>`)]));
+  }
+
+  (async () => {
+    const config = await getJson('/api/config');
+    shippingUrl = config.shippingUrl.replace(/\/$/, '');
+    dispatcherUrl = config.dispatcherUrl.replace(/\/$/, '');
+    refresh();
+    setInterval(refresh, 1500);
+  })();
+</script>
+</body>
+</html>

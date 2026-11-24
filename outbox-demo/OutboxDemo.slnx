@@ -1,0 +1,29 @@
+<Solution>
+  <Folder Name="/apphost/">
+    <Project Path="apphost/OutboxDemo.AppHost.csproj" />
+  </Folder>
+  <Folder Name="/contracts/">
+    <Project Path="contracts/OutboxDemo.Contracts.csproj" />
+  </Folder>
+  <Folder Name="/dispatcher/">
+    <Project Path="dispatcher/OutboxDemo.Dispatcher.csproj" />
+  </Folder>
+  <Folder Name="/orders/">
+    <Project Path="orders/OutboxDemo.Orders.csproj" />
+  </Folder>
+  <Folder Name="/orders-data/">
+    <Project Path="orders-data/OutboxDemo.Orders.Data.csproj" />
+  </Folder>
+  <Folder Name="/outbox-relay/">
+    <Project Path="outbox-relay/OutboxDemo.OutboxRelay.csproj" />
+  </Folder>
+  <Folder Name="/servicedefaults/">
+    <Project Path="servicedefaults/OutboxDemo.ServiceDefaults.csproj" />
+  </Folder>
+  <Folder Name="/shipping/">
+    <Project Path="shipping/OutboxDemo.Shipping.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/OutboxDemo.Tests.csproj" />
+  </Folder>
+</Solution>

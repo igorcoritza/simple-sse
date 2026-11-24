@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\contracts\OutboxDemo.Contracts.csproj" />
+    <ProjectReference Include="..\orders-data\OutboxDemo.Orders.Data.csproj" />
+    <ProjectReference Include="..\servicedefaults\OutboxDemo.ServiceDefaults.csproj" />
+  </ItemGroup>
+
+</Project>
