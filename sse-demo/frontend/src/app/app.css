@@ -1,0 +1,46 @@
+:host {
+  display: block;
+  font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  color: #1f2330;
+}
+main { max-width: 720px; margin: 0 auto; padding: 32px 16px; }
+h1 { margin: 0 0 4px; font-size: 1.6rem; }
+.subtitle { margin: 0 0 24px; color: #5b6170; }
+
+.toolbar { display: flex; gap: 8px; align-items: center; margin-bottom: 16px; }
+.status { display: inline-flex; align-items: center; gap: 6px; margin-right: auto; font-weight: 600; text-transform: capitalize; }
+.dot { width: 10px; height: 10px; border-radius: 50%; background: #9aa0ad; }
+.status.open .dot { background: #1f9d55; }
+.status.connecting .dot { background: #d69e2e; }
+.status.closed .dot { background: #c53030; }
+
+button { border: 0; border-radius: 8px; padding: 8px 14px; background: #3b5bdb; color: white; font: inherit; cursor: pointer; }
+button:disabled { opacity: 0.5; cursor: default; }
+button.ghost { background: transparent; color: #3b5bdb; border: 1px solid #c5cdf0; }
+
+.composer { display: flex; gap: 8px; }
+.composer input { flex: 1; min-width: 0; padding: 8px 12px; border: 1px solid #ccd1db; border-radius: 8px; font: inherit; }
+.hint { color: #7a8090; font-size: 0.85rem; margin: 6px 0 20px; }
+
+.messages { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 6px; }
+.messages li { display: flex; gap: 10px; align-items: baseline; padding: 10px 12px; border-radius: 8px; background: #f4f5f8; animation: in 0.25s ease-out; }
+.messages li.custom { background: #eaf0ff; }
+.messages li.welcome { background: #e8f7ee; }
+.messages li.empty { color: #7a8090; justify-content: center; }
+.badge { font-size: 0.7rem; font-weight: 700; text-transform: uppercase; color: #5b6170; min-width: 60px; }
+.text { flex: 1; }
+time { font-variant-numeric: tabular-nums; color: #7a8090; font-size: 0.85rem; }
+
+@keyframes in { from { opacity: 0; transform: translateY(-4px); } }
+
+h2 { font-size: 1.1rem; margin: 28px 0 8px; }
+.jobs .hint { margin-top: 0; }
+.steps { display: flex; align-items: center; gap: 6px; color: #5b6170; font-size: 0.9rem; }
+.steps input { width: 64px; padding: 8px; border: 1px solid #ccd1db; border-radius: 8px; font: inherit; }
+.job { margin-top: 10px; padding: 10px 12px; border-radius: 8px; background: #f4f5f8; }
+.job-head { display: flex; gap: 10px; align-items: baseline; margin-bottom: 8px; }
+.job-text { flex: 1; color: #5b6170; font-size: 0.9rem; }
+.bar { height: 8px; border-radius: 4px; background: #dde1ea; overflow: hidden; }
+.fill { height: 100%; background: #3b5bdb; transition: width 0.4s ease; }
+.job.completed .fill { background: #1f9d55; }
+.job.failed .fill { background: #c53030; }

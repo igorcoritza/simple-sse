@@ -1,0 +1,71 @@
+<main>
+  <header>
+    <h1>Server-Sent Events demo</h1>
+    <p class="subtitle">Angular + .NET 10. The server pushes messages; the browser just listens.</p>
+  </header>
+
+  <section class="toolbar">
+    <span class="status" [class]="'status ' + sse.status()">
+      <span class="dot"></span> {{ sse.status() }}
+    </span>
+    @if (sse.status() === 'closed') {
+      <button type="button" (click)="sse.connect()">Connect</button>
+    } @else {
+      <button type="button" (click)="sse.disconnect()">Disconnect</button>
+    }
+    <button type="button" class="ghost" (click)="sse.clear()">Clear</button>
+  </section>
+
+  <form class="composer" (ngSubmit)="send()">
+    <input
+      name="text"
+      placeholder="Send a message to every connected client…"
+      [ngModel]="draft()"
+      (ngModelChange)="draft.set($event)"
+      autocomplete="off"
+    />
+    <button type="submit" [disabled]="sending() || !draft().trim()">Send</button>
+  </form>
+  <p class="hint">Tip: open this page in two tabs and send a message from one of them.</p>
+
+  <section class="jobs">
+    <h2>Background jobs</h2>
+    <p class="hint">
+      Browser → API (enqueue) → Hangfire worker → Redis pub/sub → API → SSE → browser
+    </p>
+    <form class="composer" (ngSubmit)="startJob()">
+      <input name="jobName" [ngModel]="jobName()" (ngModelChange)="jobName.set($event)" />
+      <label class="steps">
+        Steps
+        <input name="jobSteps" type="number" min="1" max="20"
+               [ngModel]="jobSteps()" (ngModelChange)="jobSteps.set($event)" />
+      </label>
+      <button type="submit">Start job</button>
+    </form>
+
+    @for (job of sse.jobs(); track job.jobId) {
+      <div class="job" [class]="'job ' + job.status">
+        <div class="job-head">
+          <strong>{{ job.name }}</strong>
+          <span class="badge">{{ job.status }}</span>
+          <span class="job-text">{{ job.text }}</span>
+          <span>{{ job.progress }}%</span>
+        </div>
+        <div class="bar"><div class="fill" [style.width.%]="job.progress"></div></div>
+      </div>
+    }
+  </section>
+
+  <h2>Messages</h2>
+  <ul class="messages">
+    @for (message of sse.messages(); track $index) {
+      <li [class]="message.type">
+        <span class="badge">{{ message.type }}</span>
+        <span class="text">{{ message.text }}</span>
+        <time>{{ message.sentAt | date: 'HH:mm:ss' }}</time>
+      </li>
+    } @empty {
+      <li class="empty">Waiting for the server…</li>
+    }
+  </ul>
+</main>

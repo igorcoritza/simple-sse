@@ -1,0 +1,17 @@
+<Solution>
+  <Folder Name="/apphost/">
+    <Project Path="apphost/SseDemo.AppHost.csproj" />
+  </Folder>
+  <Folder Name="/backend/">
+    <Project Path="backend/SseDemo.Api.csproj" />
+  </Folder>
+  <Folder Name="/servicedefaults/">
+    <Project Path="servicedefaults/SseDemo.ServiceDefaults.csproj" />
+  </Folder>
+  <Folder Name="/shared/">
+    <Project Path="shared/SseDemo.Shared.csproj" />
+  </Folder>
+  <Folder Name="/worker/">
+    <Project Path="worker/SseDemo.Worker.csproj" />
+  </Folder>
+</Solution>
