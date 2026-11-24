@@ -1,0 +1,6 @@
+# Only Redis: the .NET and Angular apps run locally with dotnet / npm.
+services:
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"

@@ -11,10 +11,12 @@ var builder = WebApplication.CreateBuilder(args);
 // Aspire service defaults: OpenTelemetry (logs, traces, metrics), health checks, resilience.
 builder.AddServiceDefaults();
 
-// The Angular dev server runs on another origin, so the browser needs CORS
-// permission to open the EventSource and to POST.
+// Locally the Angular dev server runs on another origin, so the browser needs CORS
+// permission to open the EventSource and to POST. In Kubernetes both sit behind the same
+// ingress, so no extra origins are needed there.
+var allowedOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>() ?? [];
 builder.Services.AddCors(options => options.AddDefaultPolicy(policy =>
-    policy.WithOrigins("http://localhost:4200")
+    policy.WithOrigins(allowedOrigins)
           .AllowAnyHeader()
           .AllowAnyMethod()));
 

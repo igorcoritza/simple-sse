@@ -1,2 +1,4 @@
-// Base URL of the .NET backend.
-export const API_URL = 'http://localhost:5250';
+import { environment } from '../environments/environment';
+
+// Base URL of the .NET backend ('' in production = same origin, behind the ingress).
+export const API_URL = environment.apiUrl;

@@ -1,0 +1,31 @@
+parameters:
+  api:
+    port_http: 8080
+    api_image: "api:latest"
+  worker:
+    port_http: 8080
+    worker_image: "worker:latest"
+  frontend:
+    frontend_image: "frontend:latest"
+secrets:
+  api:
+    redis: ""
+  worker:
+    redis: ""
+config:
+  k8s_dashboard:
+    ASPIRE_DASHBOARD_TELEMETRY_OPTOUT: "true"
+  api:
+    OTEL_DOTNET_EXPERIMENTAL_OTLP_RETRY: "in_memory"
+    ASPNETCORE_FORWARDEDHEADERS_ENABLED: "true"
+    HTTP_PORTS: ""
+    OTEL_EXPORTER_OTLP_ENDPOINT: "http://k8s-dashboard-service:18889"
+    OTEL_EXPORTER_OTLP_PROTOCOL: "grpc"
+    OTEL_SERVICE_NAME: "api"
+  worker:
+    OTEL_DOTNET_EXPERIMENTAL_OTLP_RETRY: "in_memory"
+    ASPNETCORE_FORWARDEDHEADERS_ENABLED: "true"
+    HTTP_PORTS: ""
+    OTEL_EXPORTER_OTLP_ENDPOINT: "http://k8s-dashboard-service:18889"
+    OTEL_EXPORTER_OTLP_PROTOCOL: "grpc"
+    OTEL_SERVICE_NAME: "worker"

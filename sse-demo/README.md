@@ -11,8 +11,11 @@ sse-demo/
 ├── worker/             Servidor Hangfire que ejecuta los jobs (y su dashboard)
 ├── shared/             Contrato del job y del evento, compartido por backend y worker
 ├── frontend/           App Angular que escucha el stream con EventSource
-├── apphost/            .NET Aspire AppHost: orquesta todo el entorno local
+├── apphost/            .NET Aspire AppHost: orquesta el entorno local y genera el chart de Helm
 ├── servicedefaults/    Configuración común de Aspire (OpenTelemetry, health checks)
+├── k8s/                Chart de Helm generado con `aspire publish`
+├── infra/              Terraform: AKS, ACR, Azure Managed Redis y Key Vault
+├── azure-pipelines.yml Pipeline de ejemplo para Azure DevOps (Terraform → imágenes → Helm)
 └── docker-compose.yml  Redis, por si quieres arrancarlo sin Aspire
 ```
 
@@ -205,3 +208,101 @@ redis-cli SUBSCRIBE sse-demo:job-events
 ```bash
 cd frontend && npm test
 ```
+
+## Despliegue en Azure (AKS)
+
+La idea clave es que **el código de los servicios no cambia** entre local y producción. La API y
+el worker solo leen `ConnectionStrings__redis` de la configuración (`builder.AddRedisClient("redis")`).
+Lo único que cambia es **quién proporciona ese valor**:
+
+| | Local (`dotnet run`) | Producción (AKS) |
+|---|---|---|
+| Redis | Contenedor que arranca Aspire (`AddRedis`) | Azure Managed Redis creado por Terraform |
+| `ConnectionStrings__redis` | Lo inyecta Aspire | Secret de Kubernetes, rellenado desde Key Vault |
+| Angular | `ng serve` en :4200 (CORS hacia :5250) | nginx, detrás del mismo ingress que la API |
+| Quién crea la infraestructura | Aspire | Terraform |
+
+En `apphost/AppHost.cs`:
+
+```csharp
+IResourceBuilder<IResourceWithConnectionString> redis = isPublish
+    ? builder.AddConnectionString("redis")   // valor externo, lo aporta Terraform
+    : builder.AddRedis("redis");             // contenedor en local
+```
+
+### 1. Infraestructura con Terraform (`infra/`)
+
+Crea un resource group con:
+
+- **AKS** con el add-on *application routing* (nginx gestionado) y el driver CSI de Key Vault.
+- **ACR**, con permiso `AcrPull` para el cluster.
+- **Azure Managed Redis** (`Balanced_B0`, política `EnterpriseCluster` para tener un único endpoint).
+- **Key Vault** con el secreto `redis-connection-string` ya formateado para StackExchange.Redis.
+
+```bash
+cd infra
+cp terraform.tfvars.example terraform.tfvars   # pon tu subscription_id
+terraform init
+terraform apply
+```
+
+Salidas: `acr_login_server`, `aks_name`, `key_vault_name`, `redis_secret_name`, y
+`redis_connection_string` (sensible).
+
+### 2. Chart de Helm generado por Aspire (`k8s/`)
+
+```bash
+aspire publish --project apphost/SseDemo.AppHost.csproj -o k8s
+```
+
+(sin el CLI de Aspire instalado: `dotnet dnx aspire.cli -- publish ...`). En modo *publish*, el
+AppHost declara:
+
+- Deployments y Services para `api`, `worker` y `frontend`, más el dashboard de Aspire en el cluster.
+- `secrets.api.redis` y `secrets.worker.redis` en `values.yaml`, vacíos: se rellenan al instalar.
+- Un **Ingress** con `/api` → API y `/` → Angular. Así comparten origen y no hace falta CORS.
+  Lleva dos anotaciones imprescindibles para SSE: `proxy-buffering: off` (si no, nginx retiene
+  los eventos) y `proxy-read-timeout: 3600` (si no, corta el stream a los 60 segundos).
+
+El chart generado está en el repo para poder revisarlo. Regenéralo cuando cambie el AppHost.
+
+### 3. Imágenes
+
+```bash
+az acr login --name <acr>
+dotnet publish backend/SseDemo.Api.csproj -c Release -t:PublishContainer \
+  -p:ContainerRegistry=<acr>.azurecr.io -p:ContainerRepository=sse-demo/api -p:ContainerImageTag=1
+dotnet publish worker/SseDemo.Worker.csproj -c Release -t:PublishContainer \
+  -p:ContainerRegistry=<acr>.azurecr.io -p:ContainerRepository=sse-demo/worker -p:ContainerImageTag=1
+docker build -t <acr>.azurecr.io/sse-demo/frontend:1 frontend && docker push <acr>.azurecr.io/sse-demo/frontend:1
+```
+
+Las imágenes .NET las crea el SDK sin Dockerfile. Angular usa `frontend/Dockerfile`, que compila
+con Node y sirve los ficheros estáticos con nginx.
+
+### 4. Helm
+
+```bash
+az aks get-credentials -g <resource-group> -n <aks>
+az keyvault secret show --vault-name <key-vault> -n redis-connection-string --query value -o tsv  # para el values file
+helm upgrade --install sse-demo k8s -n sse-demo --create-namespace \
+  -f secrets.values.yaml \
+  --set parameters.api.api_image=<acr>.azurecr.io/sse-demo/api:1 \
+  --set parameters.worker.worker_image=<acr>.azurecr.io/sse-demo/worker:1 \
+  --set parameters.frontend.frontend_image=<acr>.azurecr.io/sse-demo/frontend:1
+```
+
+`secrets.values.yaml` contiene `secrets.api.redis` y `secrets.worker.redis` con la cadena de
+conexión. Se pasa como fichero porque la cadena lleva comas y `--set` las interpretaría como
+separadores. No lo subas al repositorio.
+
+**Alternativa sin pasar el secreto por el pipeline:** el cluster ya tiene el driver CSI de Key Vault
+y permiso de lectura sobre el vault. Con un `SecretProviderClass` que sincronice
+`redis-connection-string` a un Secret de Kubernetes, los pods lo leen directamente de Key Vault.
+
+### Pipeline de Azure DevOps
+
+`azure-pipelines.yml` encadena los tres pasos: `terraform apply` → construir y subir las imágenes a
+ACR → leer el secreto de Key Vault (`AzureKeyVault@2`) y hacer `helm upgrade --install`. Necesita
+una service connection de Azure Resource Manager con permisos para crear recursos y asignar roles.
+
